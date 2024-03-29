@@ -1,0 +1,88 @@
+name: Tests & mirroring & Release
+env:
+  MIRROR_URL: git@github.com:EpitechPromo2025/B-FUN-500-PAR-5-2-glados-florian.labarre.git
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  test:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup GHC
+        uses: haskell/actions/setup@v2
+        with:
+          ghc-version: "9.2.5"
+          enable-stack: true
+      - name: Set up Erlang
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '24.0'
+      - name: Clone project
+        uses: actions/checkout@v3
+      - name: Cache dependencies
+        uses: actions/cache@v1
+        with:
+          path: ~/.stack
+          key: ${{ runner.os }}-${{ hashFiles('stack.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-
+      - name: Build and run tests
+        run: "stack test --fast --no-terminal --system-ghc"
+      - name: Function Test
+        run: "stack --local-bin-path . install --system-ghc && mv glados-exe glados && ./testFunctional.sh"
+  push_to_mirror:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Push to mirror
+        uses: pixta-dev/repository-mirroring-action@v1
+        with:
+          target_repo_url:
+            ${{ env.MIRROR_URL }}
+          ssh_private_key:
+            ${{ secrets.SSH_PRIVATE_KEY }}
+  release:
+    name: "Release"
+    runs-on: "ubuntu-latest"
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Setup GHC
+        uses: haskell/actions/setup@v2
+        with:
+          ghc-version: "9.2.5"
+          enable-stack: true
+      - name: Clone project
+        uses: actions/checkout@v3
+      - name: Cache dependencies
+        uses: actions/cache@v1
+        with:
+          path: ~/.stack
+          key: ${{ runner.os }}-${{ hashFiles('stack.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-
+      - name: Build
+        run: "stack --local-bin-path . install --system-ghc"
+      - name: Bump version and push tag
+        id: generateTag
+        uses: anothrNick/github-tag-action@1.55.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: ${{ steps.generateTag.outputs.tag }}
+          prerelease: false
+          title: "Release Build"
+          files: |
+            LICENSE
+            glados-exe
